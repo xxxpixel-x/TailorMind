@@ -28,7 +28,7 @@ import { ASSET_BY_ID } from "@/lib/asset-catalog";
 import { assetConflicts } from "@/lib/workbench-evidence";
 import type { BusinessLedger, BusinessMode, DesignDirectionOption, FollowUpQuestion, InterviewPhoto, InterviewTurn, LiangYiPlanPackage } from "@/lib/types";
 import { groupClients, type ClientProfile } from "@/lib/workbench-clients";
-import { archivePhotos, clearPhotoLibrary, PHOTO_LIMIT } from "@/lib/workbench-photos";
+import { archivePhotos, clearPhotoLibrary, PHOTO_LIMIT, photoDataUrl } from "@/lib/workbench-photos";
 import { planVersions } from "@/lib/workbench-versions";
 
 const ORDERS_KEY = "liangyi_workbench_orders_v2";
@@ -261,6 +261,7 @@ export default function LiangYiWorkbench() {
     const indices = order?.planParagraphIndices && [...order.planParagraphIndices,
       ...paragraphs.slice(order.customerParagraphs.length).map((_, i) => order.customerParagraphs.length + i)];
     const activeText = indices ? indices.map(i => paragraphs[i]) : paragraphs;
+    const latest = paragraphs.at(-1) || "";
     const origin = navigationVersion.current;
     const controller = new AbortController();
     request.current = controller; setBusy(true); setError("");
@@ -269,15 +270,24 @@ export default function LiangYiWorkbench() {
       setSession(s => ({ mode, startedAt: order && s ? s.startedAt : input.at, orderNo: order?.ledger.ledgerNo, pending: input }));
     }
     try {
+      // 本次新加的参考图交给服务端识别（配置了视觉模型才会用到）；累计张数用于生成参考图追问。
+      const referenceCount = [...(order?.photos ?? []), ...photos].filter(p => p.label === "参考图").length;
+      const referenceImages = (await Promise.all(photos.filter(p => p.label === "参考图")
+        .map(p => photoDataUrl(p.id).catch(() => null)))).filter(Boolean);
       const res = await fetch("/api/agent/analyze", {
         method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
         body: JSON.stringify({ mode, conversation: activeText.map(content => ({ role: "advisor", content })),
+          referenceImageCount: referenceCount, referenceImages,
           customConfig: { ...textModelConfig(settings), localOnly: !settings.llmApiKey.trim() } }),
       });
       const json = await res.json();
       if (controller.signal.aborted) return;
       if (!res.ok || !json.ok || !json.data) throw new Error(json.error || "需求单更新失败，请重试。");
       const next: LiangYiPlanPackage = json.data;
+      if (json.referenceNote) {
+        paragraphs = [...paragraphs, json.referenceNote];
+        indices?.push(paragraphs.length - 1);
+      }
       // 保留完整面谈文本，即使接口只读取最近几轮。
       next.customerParagraphs = paragraphs;
       next.customerInput = paragraphs.join("\n");
@@ -286,7 +296,7 @@ export default function LiangYiWorkbench() {
         reply: json.advisorReply || next.emotionalReport.personaSummary || next.conversationSummary };
       if (order) {
         updateOrder(order.ledger.ledgerNo, p => {
-          const merged = mergeAnalysis(p, next, action, paragraphs.at(-1) || "");
+          const merged = mergeAnalysis(p, next, action, latest);
           if (photos.length) merged.photos = Array.from(new Map([...(p.photos ?? []), ...photos].map(photo => [photo.id, photo])).values()).slice(0, PHOTO_LIMIT);
           if (!turn) return merged;
           const previous = p.interviewTurns ?? [];
@@ -450,7 +460,7 @@ export default function LiangYiWorkbench() {
                 onGenerateSheet={() => { setSheetView("spec"); updateCurrent(recordSheet); navigate("order", 3, false, true); }}
                 onOpenTechPack={openTechPack}
                 onUpdateDirectionImage={(id, url, caption) => updateCurrent(p => ({ ...p, proposal: { ...p.proposal,
-                  directions: p.proposal.directions.map(d => d.id === id ? { ...d, referenceImageUrl: url, referenceImageCaption: caption } : d) } }))}
+                  directions: p.proposal.directions.map(d => d.id === id ? { ...d, baseImageUrl: d.baseImageUrl ?? d.referenceImageUrl, referenceImageUrl: url, referenceImageCaption: caption } : d) } }))}
                 onInspectDetail={inspectDetail} onInspectAsset={setInspectId} onRegenerateDirections={() => analyze(pkg.mode, pkg.customerParagraphs, pkg, { action: "重新生成方向" })}
                 onOpenModelConfig={() => openSettings("image", "当前订单")} onOpenFullVisualBoard={() => setModal("visual")} isLoading={busy} />}
               {step === 3 && compare && <VersionComparison pkg={pkg} busy={busy} onBack={() => navigate("order", 3, false, true)}

@@ -183,6 +183,32 @@ assert((r5.proposal.uniformTiers?.length || 0) === 3, "生成三级岗位同源�
 assert((r5.ledger.uniformSizeTable?.length || 0) >= 2, "生成团装号型与特体归档表");
 
 console.log("\n========================================");
+console.log("P0 验收 6：赛题原话「老上海味道但别老气」与参考图追问");
+console.log("========================================");
+const s6 = "我想要老上海味道但别老气";
+const run6 = async (paragraphs, referenceImageCount = 0) =>
+  (await runLiangYiAgent({ mode: "bespoke", referenceImageCount,
+    conversation: paragraphs.map((content) => ({ role: "advisor", content })) })).plan;
+const r6 = await run6([s6]);
+console.log("  需求:", r6.requirements.map((x) => `${x.rawPhrase}[${x.status}]`).join(" ; "));
+console.log("  追问:", r6.followUpQuestions.map((q) => q.question).join(" / "));
+assert(r6.requirements.some((x) => x.rawPhrase === "老上海味道"), "拆出「老上海味道」");
+assert(r6.requirements.some((x) => /老气/.test(x.rawPhrase)), "拆出「别老气」");
+assert(r6.followUpQuestions.some((q) => q.id === "FQ-OLD-SHANGHAI"), "追问老上海味道体现在哪一处");
+const r6b = await run6([s6, "老上海味道体现在盘扣点题"]);
+const old6 = r6b.requirements.find((x) => x.rawPhrase === "老上海味道");
+assert(old6?.status === "已落实" && old6.ruleOrAssetId === "CRF-02", "回答后落到一字盘扣工艺并标已落实");
+assert(!r6b.followUpQuestions.some((q) => q.id === "FQ-OLD-SHANGHAI"), "回答后不再重复追问");
+assert(r6b.verification.unhandledClauseCount === 0, "追问回答不被当成未处理短句");
+const r6c = await run6([s6], 2);
+assert(r6c.followUpQuestions.some((q) => q.id === "FQ-REF-PHOTO"), "有参考图时追问最喜欢哪一处");
+const r6d = await run6([s6, "参考图最喜欢领型"], 2);
+assert(r6d.requirements.some((x) => x.rawPhrase === "参考图：借鉴领型" && x.needsMasterApproval), "参考图领型转成需求并交制版师核准");
+const r6e = await run6([s6, "参考图识别：中式立领，一字盘扣，酒红宋锦，H 型短外套"], 2);
+assert(!r6e.followUpQuestions.some((q) => q.id === "FQ-REF-PHOTO"), "视觉模型已识别时不再追问参考图");
+assert(r6e.verification.unhandledClauseCount === 0, "参考图识别结果不计入未处理短句");
+
+console.log("\n========================================");
 console.log(failed === 0 ? "ALL P0 ACCEPTANCE CHECKS PASSED!" : `FAILED COUNT: ${failed}`);
 console.log("========================================");
 process.exit(failed === 0 ? 0 : 1);

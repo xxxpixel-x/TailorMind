@@ -69,6 +69,8 @@ export default function Screen2Directions({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt: compiled.cn,
+          negativePrompt: compiled.neg,
+          baseImagePath: dir.baseImageUrl ?? dir.referenceImageUrl,
           customImageConfig: {
             baseUrl: modelSettings.imgBaseUrl,
             apiKey: modelSettings.imgApiKey,
@@ -78,8 +80,8 @@ export default function Screen2Directions({
       });
       const json = await res.json();
       if (json.ok && json.imageUrl) {
-        onUpdateDirectionImage(dir.id, json.imageUrl, "AI 概念效果图");
-        setRenderNotice(`已为「${dir.title}」生成概念效果图。`);
+        onUpdateDirectionImage(dir.id, json.imageUrl, json.constrained ? "AI 效果图 · 母版结构约束" : "AI 概念效果图");
+        setRenderNotice(`已为「${dir.title}」生成${json.constrained ? "效果图，版型沿用母版实物图" : "概念效果图"}。`);
       } else {
         setRenderNotice(
           json.message ||

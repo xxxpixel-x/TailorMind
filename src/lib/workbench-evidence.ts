@@ -4,7 +4,7 @@ import type { DesignDirectionOption, LiangYiPlanPackage, SixDimensionBreakdown }
 
 type Dimension = keyof SixDimensionBreakdown;
 const dimensionLinks: { key: Dimension; fields: (keyof LiangYiPlanPackage["eightFields"])[]; topics: RegExp[] }[] = [
-  { key: "styleTone", fields: [], topics: [/婚礼|主婚|婚宴/, /端庄|稳重|庄重/, /克制|内敛|低调/, /老气|年轻|显精神/, /玉兰|江南|海派文化/, /现代|简约|利落/] },
+  { key: "styleTone", fields: [], topics: [/婚礼|主婚|婚宴/, /端庄|稳重|庄重/, /克制|内敛|低调/, /老气|年轻|显精神/, /玉兰|江南|海派文化|老上海|海派味/, /现代|简约|利落/] },
   { key: "silhouette", fields: ["structure", "lengthRatio", "easeAllowance"], topics: [/收腰|腰省/, /直身|宽松|H\s*型/i,
     /后背|后衣片|后片/, /袖肥|袖管|臂围/, /袖笼|抬臂|抬手/, /衣长|腰线/, /腹部|肚腩|前腹/, /落肩|肩宽|肩背/, /叠穿|外搭|内搭/, /特体|套码/] },
   { key: "fabricTexture", fields: ["fabric"], topics: [/骨感|挺而不硬|不贴/, /垂感|垂顺/, /宋锦|织锦/, /真丝|桑蚕丝/,

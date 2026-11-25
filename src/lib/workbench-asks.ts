@@ -14,12 +14,14 @@ export function formatFollowUpAnswer(id: string, answer: string) {
   if (id === "FQ-QIPAO-COLLAR") return answer === "还没定" ? "旗袍领型还没定" : `旗袍是${answer}`;
   if (id === "FQ-SLEEVE-LEN") return `袖长选${answer}`;
   if (id === "FQ-OLD-STYLE") return `老气更接近${answer}`;
+  if (id === "FQ-OLD-SHANGHAI") return `老上海味道体现在${answer}`;
+  if (id === "FQ-REF-PHOTO") return `参考图最喜欢${answer}`;
   return answer;
 }
 
 const questionTopics: Record<string, RegExp> = {
   "FQ-QIPAO-COLLAR": /旗袍/, "FQ-SLEEVE-LEN": /手臂|胳膊|袖长/,
-  "FQ-OLD-STYLE": /老气/, "FQ-CONFLICT-LOOSE-SLIM": /宽松|显瘦/,
+  "FQ-OLD-STYLE": /老气/, "FQ-OLD-SHANGHAI": /老上海|上海味|海派|民国/, "FQ-REF-PHOTO": /参考图/, "FQ-CONFLICT-LOOSE-SLIM": /宽松|显瘦/,
   "FQ-COLOR": /主色|颜色|色彩/, "FQ-SEASON": /季节|室内|户外/,
   "FQ-UNI-VI": /品牌|企业色|套号/,
 };

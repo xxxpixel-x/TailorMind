@@ -1,10 +1,57 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit } from "@/lib/rate-limiter";
+
+// 只允许读取 public 下的集团案例与母版参考图，作为生图的结构约束。
+async function loadBaseImage(raw: unknown): Promise<string | null> {
+  const rel = typeof raw === "string" ? raw : "";
+  const match = rel.match(/^\/(?:cases|generated)\/[\w\-/]+\.(jpe?g|png)$/i);
+  if (!match || rel.includes("..")) return null;
+  try {
+    const buf = await readFile(path.join(process.cwd(), "public", rel));
+    const mime = match[1].toLowerCase() === "png" ? "image/png" : "image/jpeg";
+    return `data:${mime};base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
+function pickImageUrl(json: Record<string, unknown> & { data?: { url?: string; b64_json?: string }[]; images?: { url?: string }[]; imageUrl?: string }) {
+  return (
+    json?.imageUrl ||
+    json?.data?.[0]?.url ||
+    json?.images?.[0]?.url ||
+    (json?.data?.[0]?.b64_json ? `data:image/png;base64,${json.data[0].b64_json}` : null)
+  );
+}
+
+// 预留：自建 ComfyUI 等推理服务（风格 LoRA + ControlNet）。
+// 约定 POST { prompt, negativePrompt, loraId, controlImage, controlType }，返回 { imageUrl }。
+async function renderWithStyleService(params: { prompt: string; negativePrompt: string; baseImage: string | null }) {
+  const url = (process.env.LIANGYI_STYLE_SERVICE_URL || "").trim();
+  const res = await fetch(url, {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: params.prompt,
+      negativePrompt: params.negativePrompt,
+      loraId: process.env.LIANGYI_STYLE_LORA || "haipai-v1",
+      controlImage: params.baseImage,
+      controlType: process.env.LIANGYI_CONTROL_TYPE || "lineart",
+    }),
+    signal: AbortSignal.timeout(90000),
+  });
+  if (!res.ok) throw new Error(`风格生图服务返回 HTTP ${res.status}`);
+  return pickImageUrl(await res.json());
+}
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const prompt = String(body.prompt || "").trim().slice(0, 1200);
+    const negativePrompt = String(body.negativePrompt || "").trim().slice(0, 400);
     const customImageConfig = body.customImageConfig as
       | { baseUrl?: string; apiKey?: string; model?: string }
       | undefined;
@@ -23,6 +70,19 @@ export async function POST(req: NextRequest) {
       const rl = checkRateLimit(ip, "visualize");
       if (!rl.allowed) {
         return NextResponse.json({ error: rl.reason }, { status: 429 });
+      }
+    }
+
+    const baseImage = await loadBaseImage(body.baseImagePath);
+
+    if (process.env.LIANGYI_STYLE_SERVICE_URL?.trim()) {
+      try {
+        const imageUrl = await renderWithStyleService({ prompt, negativePrompt, baseImage });
+        if (imageUrl) {
+          return NextResponse.json({ ok: true, imageUrl, modelUsed: "风格 LoRA + ControlNet", constrained: Boolean(baseImage) });
+        }
+      } catch {
+        // 自建服务不可用时回落到下方的通用生图接口。
       }
     }
 
@@ -52,21 +112,32 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const res = await fetch(`${baseUrl}/images/generations`, {
-      method: "POST",
-      cache: "no-store",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        prompt,
-        image_size: "1024x768",
-        num_inference_steps: 25,
-      }),
-      signal: AbortSignal.timeout(45000),
-    });
+    const generate = (image: string | null) =>
+      fetch(`${baseUrl}/images/generations`, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          prompt,
+          image_size: "1024x768",
+          num_inference_steps: 25,
+          // 以母版参考图做图生图，让出图沿用可落地的版型结构。
+          ...(image ? { image } : {}),
+        }),
+        signal: AbortSignal.timeout(45000),
+      });
+
+    let res = await generate(baseImage);
+    let constrained = Boolean(baseImage);
+    // 部分模型不支持图生图，去掉参考图再试一次。
+    if (!res.ok && baseImage) {
+      res = await generate(null);
+      constrained = false;
+    }
 
     if (!res.ok) {
       return NextResponse.json(
@@ -78,13 +149,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const json = await res.json();
-    const imageUrl =
-      json?.data?.[0]?.url ||
-      json?.images?.[0]?.url ||
-      (json?.data?.[0]?.b64_json
-        ? `data:image/png;base64,${json.data[0].b64_json}`
-        : null);
+    const imageUrl = pickImageUrl(await res.json());
 
     if (!imageUrl) {
       return NextResponse.json(
@@ -97,6 +162,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       imageUrl,
       modelUsed: model,
+      constrained,
     });
   } catch {
     return NextResponse.json({ ok: false, message: "实时生图请求失败，请检查图像模型配置。" }, { status: 500 });

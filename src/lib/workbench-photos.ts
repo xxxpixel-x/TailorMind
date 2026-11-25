@@ -43,13 +43,13 @@ export function photoBlob(id: string) {
   });
 }
 
-async function compress(file: File) {
+async function compress(file: Blob, max = 1600) {
   const url = URL.createObjectURL(file);
   try {
     const image = new Image();
     image.src = url;
     await image.decode();
-    const scale = Math.min(1, 1600 / Math.max(image.naturalWidth, image.naturalHeight));
+    const scale = Math.min(1, max / Math.max(image.naturalWidth, image.naturalHeight));
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
@@ -61,6 +61,19 @@ async function compress(file: File) {
     return await new Promise<Blob>((resolve, reject) => canvas.toBlob(blob =>
       blob ? resolve(blob) : reject(new Error("图片压缩失败")), "image/jpeg", 0.84));
   } finally { URL.revokeObjectURL(url); }
+}
+
+// 发给视觉模型的参考图缩到 768px 以内，控制请求体积。
+export async function photoDataUrl(id: string) {
+  const blob = await photoBlob(id);
+  if (!blob) return null;
+  const small = await compress(blob, 768);
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(small);
+  });
 }
 
 export async function addDraftPhotos(key: string, files: File[], available: number, signal: AbortSignal) {

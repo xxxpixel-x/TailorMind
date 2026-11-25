@@ -6,6 +6,7 @@ import {
   runLiangYiAgent,
 } from "@/lib/agent-engine";
 import { BusinessMode } from "@/lib/types";
+import { describeReferenceImages } from "@/lib/vision";
 
 export async function POST(req: NextRequest) {
   try {
@@ -45,16 +46,25 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 参考图：配置了视觉模型就先识别成一段文字并入原话，否则只计数，由追问兜底。
+    const referenceImages = (Array.isArray(body.referenceImages) ? body.referenceImages : [])
+      .filter((u: unknown): u is string => typeof u === "string" && u.startsWith("data:image/"))
+      .slice(0, 6);
+    const referenceNote = await describeReferenceImages(referenceImages, customConfig);
+    if (referenceNote) conversation.push({ role: "advisor", content: referenceNote });
+
     const result = await runLiangYiAgent({
       mode,
       conversation,
       customConfig,
+      referenceImageCount: Math.max(0, Math.min(6, Number(body.referenceImageCount) || 0)),
     });
 
     return NextResponse.json({
       ok: true,
       data: result.plan,
       advisorReply: result.advisorReply,
+      referenceNote,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "衣语引擎服务异常";

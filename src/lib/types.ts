@@ -231,6 +231,7 @@ export interface DesignDirectionOption {
   bullets: string[]; // 三条针对这个客户的短卖点
   referenceImageUrl: string; // 当前用上服案例实物图
   referenceImageCaption: string; // 明确标“案例二实物”，不冒充效果图
+  baseImageUrl?: string; // 出过 AI 效果图后保留原实物图，作为后续生图的结构约束
   patternId: string;
   fabricId: string;
   craftId?: string;

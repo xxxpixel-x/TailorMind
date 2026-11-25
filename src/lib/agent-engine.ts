@@ -183,6 +183,11 @@ interface ParsedIntentContext {
   isQipaoOvercoat: boolean;
   isTwoPieceStage: boolean;
   isNotOld: boolean;
+  isOldShanghai: boolean;
+  oldShanghaiAccent: string;
+  referenceImageCount: number;
+  referencePick: string;
+  hasVisionNote: boolean;
   isAnhuiHui: boolean;
   isPlumPattern: boolean;
   isMagnolia: boolean;
@@ -203,7 +208,15 @@ interface ParsedIntentContext {
   searchKeywords: string[];
 }
 
-function parseIntentContext(text: string, mode: BusinessMode): ParsedIntentContext {
+const OLD_SHANGHAI_ACCENTS: Record<string, { action: string; assetId: string }> = {
+  盘扣点题: { action: "门襟用一组手工一字盘扣点题，其余不加装饰", assetId: "CRF-02" },
+  暗纹面料: { action: "选用暗纹提花面料，远看素净、近看有纹，不加刺绣", assetId: "FAB-SF-03" },
+  细嵌条滚边: { action: "领口与门襟走 1.5mm 异色细嵌条，其余保持素面", assetId: "CRF-03" },
+};
+
+const OLD_SHANGHAI_RE = /老上海|上海味道|上海味儿|海派(?:味道|味儿|韵味|风情)|民国风/;
+
+function parseIntentContext(text: string, mode: BusinessMode, referenceImageCount = 0): ParsedIntentContext {
   const isQipaoOvercoat =
     /(?:穿在|搭在|配在?).{0,4}旗袍.{0,4}外|旗袍.{0,4}外搭|旗袍外套/.test(text);
   const isWeddingMom =
@@ -215,6 +228,10 @@ function parseIntentContext(text: string, mode: BusinessMode): ParsedIntentConte
     isWeddingMom ||
     /妈妈|母亲|女式|女装|连衣裙|套裙|婆婆|丈母娘|梅花|青果|优雅/.test(text);
   const isNotOld = /(?:别|不要|不).{0,3}老气|显年轻/.test(text);
+  const isOldShanghai = OLD_SHANGHAI_RE.test(text);
+  const oldShanghaiAccent = Array.from(text.matchAll(/盘扣点题|暗纹面料|细嵌条滚边/g)).at(-1)?.[0] ?? "";
+  const hasVisionNote = /参考图识别[:：]/.test(text);
+  const referencePick = Array.from(text.matchAll(/参考图最喜欢(领型|颜色|面料|廓形)/g)).at(-1)?.[1] ?? "";
   const isAnhuiHui = /安徽|徽派|马头墙/.test(text);
   const isPlumPattern = /梅花/.test(text);
   const isMagnolia = /白玉兰|玉兰|外滩|石库门|江南/.test(text);
@@ -255,6 +272,8 @@ function parseIntentContext(text: string, mode: BusinessMode): ParsedIntentConte
   if (isPlumPattern) kws.push("梅花暗纹", "提花宋锦", "青果西装领");
   if (isMagnolia) kws.push("上海白玉兰", "石库门窗棂");
   if (isLowKeyXYS) kws.push("香云纱", "自然落肩", "内敛低调");
+  // 客户选定点题方式后只检索对应工艺，避免需求写盘扣、方案却配嵌条。
+  if (isOldShanghai) kws.push(...({ 盘扣点题: ["一字盘扣", "盘扣"], 暗纹面料: ["暗纹", "织花"], 细嵌条滚边: ["嵌条", "滚边"] }[oldShanghaiAccent] ?? ["海派"]));
   if (/(?:脖子|颈).{0,4}短|卡脖|领子?.{0,4}(?:不要|不能|别).{0,3}高/.test(text)) {
     kws.push("低立领", "短颈");
   }
@@ -268,6 +287,11 @@ function parseIntentContext(text: string, mode: BusinessMode): ParsedIntentConte
     isQipaoOvercoat,
     isTwoPieceStage,
     isNotOld,
+    isOldShanghai,
+    oldShanghaiAccent,
+    referenceImageCount,
+    referencePick,
+    hasVisionNote,
     isAnhuiHui,
     isPlumPattern,
     isMagnolia,
@@ -328,6 +352,28 @@ function buildTargetedFollowUps(
       whyItMatters: "明确客户排斥的是色彩、满花还是廓形，直接决定三个方向的侧重。",
       impactRank: 3,
       quickAnswers: ["颜色暗沉", "花纹太满", "款式宽大"],
+    });
+  }
+
+  // 3b. 「老上海味道」落到哪一处海派符号
+  if (ctx.isOldShanghai && !ctx.oldShanghaiAccent) {
+    qs.push({
+      id: "FQ-OLD-SHANGHAI",
+      question: "“老上海味道”想体现在哪一处？",
+      whyItMatters: "只留一处海派符号点题，其余保持利落，才能有味道又不老气。",
+      impactRank: 3,
+      quickAnswers: ["盘扣点题", "暗纹面料", "细嵌条滚边"],
+    });
+  }
+
+  // 3c. 有参考图但还没确认借鉴哪一处
+  if (ctx.referenceImageCount > 0 && !ctx.referencePick && !ctx.hasVisionNote) {
+    qs.push({
+      id: "FQ-REF-PHOTO",
+      question: "参考图最喜欢哪一处？",
+      whyItMatters: "只借鉴参考图里客户真正想要的部分，其余按体型和场合重新设计。",
+      impactRank: 2,
+      quickAnswers: ["领型", "颜色", "面料", "廓形"],
     });
   }
 
@@ -655,6 +701,8 @@ function buildDirections(params: {
   const fabricShort =
     primaryFabric.name.match(/提花宋锦|宋锦|香云纱|织花绸|三醋酸提花|三醋酸|真丝暗纹|真丝|肌理针织|针织|羊毛呢|亮面缎|醋酸/)?.[0] ||
     primaryFabric.name.replace(/（.*?）/g, "").slice(0, 6);
+  // 客户选「盘扣点题」时，B 方向的点题工艺换成一字盘扣。
+  const frog = ctx.oldShanghaiAccent === "盘扣点题";
   return [
     {
       id: "classic",
@@ -705,6 +753,8 @@ function buildDirections(params: {
       tag: "B · 一处亮点",
       title: ctx.isAnhuiHui
         ? "徽派马头墙撞色肌理针织外套"
+        : frog
+        ? `${colorTitle}哑光香云纱 · 一字盘扣外套`
         : `${colorTitle}哑光香云纱 · 细嵌条外套`,
       swatches: ctx.isAnhuiHui
         ? [
@@ -713,7 +763,7 @@ function buildDirections(params: {
           ]
         : [
             { hex: mainHex, label: mainColor?.nameCn || "深乌金褐" },
-            { hex: "#A8432F", label: "1.5mm 细嵌条" },
+            { hex: "#A8432F", label: frog ? "同色一字盘扣" : "1.5mm 细嵌条" },
           ],
       bullets: ctx.isAnhuiHui
         ? [
@@ -722,7 +772,7 @@ function buildDirections(params: {
             "3cm 以内圆角低立领不卡脖",
           ]
         : [
-            "门襟一道 1.5mm 极细滚边提神",
+            frog ? "门襟一组手工一字盘扣点题，老上海味道只留这一处" : "门襟一道 1.5mm 极细滚边提神",
             "自然落肩柔和舒展，哑光内敛",
             "远看素净，近距离显手工细节",
           ],
@@ -732,11 +782,11 @@ function buildDirections(params: {
       referenceImageCaption: ctx.isAnhuiHui ? "案例五实物" : "哑光香云纱细嵌条效果图",
       patternId: ctx.isAnhuiHui ? "PAT-SF-05" : "PAT-SF-04",
       fabricId: ctx.isAnhuiHui ? "FAB-SF-06" : "FAB-SF-02",
-      craftId: ctx.isAnhuiHui ? "CRF-04" : "CRF-03",
+      craftId: ctx.isAnhuiHui ? "CRF-04" : frog ? "CRF-02" : "CRF-03",
       positioning: "留出一处克制文化或工艺记忆点",
-      restraintNote: "全身只保留一处结构分割或极细滚边",
-      garmentSummary: ctx.isAnhuiHui ? "马头墙阶梯分割低立领夹克" : "自然落肩哑光细嵌条外套",
-      collarAndCraftDiff: ctx.isAnhuiHui ? "阶梯撞色分割 + 菱格肌理" : "1.5mm 极细门襟滚边",
+      restraintNote: frog ? "全身只保留一组盘扣，不加滚边与刺绣" : "全身只保留一处结构分割或极细滚边",
+      garmentSummary: ctx.isAnhuiHui ? "马头墙阶梯分割低立领夹克" : frog ? "自然落肩哑光一字盘扣外套" : "自然落肩哑光细嵌条外套",
+      collarAndCraftDiff: ctx.isAnhuiHui ? "阶梯撞色分割 + 菱格肌理" : frog ? "手工刮浆一字盘扣" : "1.5mm 极细门襟滚边",
       fabricSuggestion: ctx.isAnhuiHui ? "肌理提花针织" : "非遗香云纱",
       suitableFor: "希望衣服有含蓄文化质感与故事性的客户",
       hardReqGuarantee: "已覆盖全部领型、松量与色彩要求",
@@ -894,15 +944,16 @@ export function runLocalRuleEngine(params: {
   conversation: ConversationInputTurn[];
   modelLabel?: string;
   isInitialSeed?: boolean;
+  referenceImageCount?: number;
 }): AgentRunResponse {
-  const { mode, conversation, isInitialSeed = false } = params;
+  const { mode, conversation, isInitialSeed = false, referenceImageCount = 0 } = params;
   const advisorParagraphs = conversation
     .filter((m) => m.role === "advisor")
     .map((m) => m.content.trim())
     .filter(Boolean);
   const fullText = advisorParagraphs.join("；");
 
-  const ctx = parseIntentContext(fullText, mode);
+  const ctx = parseIntentContext(fullText, mode, referenceImageCount);
   const colors = detectColors(fullText);
 
   const bodyRules = searchBodyRulesTool({
@@ -1152,6 +1203,40 @@ export function runLocalRuleEngine(params: {
       status: ctx.hasOldStyleAnswer ? "已落实" : "推断",
       ownerRole: "设计师",
       needsMasterApproval: false,
+    });
+  }
+
+  // 老上海味道（审美点题，归设计师）
+  if (ctx.isOldShanghai) {
+    const accent = OLD_SHANGHAI_ACCENTS[ctx.oldShanghaiAccent];
+    pushReq({
+      rawPhrase: "老上海味道",
+      sourceSpan: findSpan(fullText, new RegExp(OLD_SHANGHAI_RE.source + "(?:的)?(?:味道|感觉|风格)?"), "老上海味道"),
+      category: "审美风格",
+      isHardRequirement: true,
+      priority: 2,
+      solutionAction: accent?.action ?? "只留一处海派符号点题（盘扣、暗纹或细嵌条），其余保持利落",
+      rationale: "海派味道靠一处工艺点题，不靠满身元素堆叠，与「不老气」同时成立",
+      ruleOrAssetId: accent?.assetId,
+      status: accent ? "已落实" : "推断",
+      ownerRole: "设计师",
+      needsMasterApproval: false,
+    });
+  }
+
+  // 参考图借鉴部位（无视觉模型时由顾问点选确认）
+  if (ctx.referencePick) {
+    pushReq({
+      rawPhrase: `参考图：借鉴${ctx.referencePick}`,
+      sourceSpan: `参考图最喜欢${ctx.referencePick}`,
+      category: "审美风格",
+      isHardRequirement: false,
+      priority: 3,
+      solutionAction: `${ctx.referencePick}参照客户参考图，其余部位按体型与场合重新设计`,
+      rationale: "参考图只借鉴客户点名的部位，避免整件照搬",
+      status: "已落实",
+      ownerRole: ctx.referencePick === "领型" || ctx.referencePick === "廓形" ? "制版师" : "设计师",
+      needsMasterApproval: ctx.referencePick === "领型" || ctx.referencePick === "廓形",
     });
   }
 
@@ -1811,8 +1896,9 @@ export async function runLiangYiAgent(params: {
   mode: BusinessMode;
   conversation: ConversationInputTurn[];
   customConfig?: CustomLlmConfig;
+  referenceImageCount?: number;
 }): Promise<AgentRunResponse> {
-  const { mode, conversation, customConfig } = params;
+  const { mode, conversation, customConfig, referenceImageCount = 0 } = params;
 
   const apiKey = (
     customConfig?.apiKey || process.env.LIANGYI_LLM_API_KEY || process.env.DEEPSEEK_API_KEY || ""
@@ -1830,7 +1916,7 @@ export async function runLiangYiAgent(params: {
     "deepseek-chat"
   ).trim();
 
-  const fallback = runLocalRuleEngine({ mode, conversation });
+  const fallback = runLocalRuleEngine({ mode, conversation, referenceImageCount });
   if (customConfig?.localOnly || !apiKey) {
     return fallback;
   }
@@ -2031,9 +2117,14 @@ export async function runLiangYiAgent(params: {
           }))
         : fallback.plan.requirements;
 
-    const llmFollowUps = Array.isArray(parsed.followUpQuestions)
+    const parsedFollowUps = Array.isArray(parsed.followUpQuestions)
       ? (parsed.followUpQuestions as FollowUpQuestion[]).slice(0, 3)
       : fallback.plan.followUpQuestions;
+    // 参考图追问依赖照片数量，大模型看不到照片，由本地引擎补上。
+    const refQuestion = fallback.plan.followUpQuestions.find((q) => q.id === "FQ-REF-PHOTO");
+    const llmFollowUps = refQuestion && !parsedFollowUps.some((q) => q.id === refQuestion.id)
+      ? [refQuestion, ...parsedFollowUps].slice(0, 3)
+      : parsedFollowUps;
 
     const llmEightFields: EightFieldTranslation = {
       ...fallback.plan.eightFields,
